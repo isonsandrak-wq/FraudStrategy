@@ -1,0 +1,62 @@
+-- =============================================================================
+-- GOAL: Find merchants that received multiple small transactions (under $5)
+--       from DIFFERENT accounts within a short time window (e.g., 10 minutes).
+-- WHY: This is the signature of card testing. Fraudsters use may test card numbers in batch
+-- =============================================================================
+
+-- CTE (Common Table Expression) – names an intermediate result for later use
+WITH suspicious_merchants AS (
+    -- Step 1: Group small transactions by merchant and time window (1‑minute buckets)
+    SELECT 
+        merchant_name,   -- The merchant where the test transactions occurred
+        -- Truncates the timestamp to the start of the minute (e.g., 10:15:22 -> 10:15:00)
+        -- This creates a 1‑minute window to find bursts of testing
+        DATE_TRUNC('minute', transaction_timestamp) AS txn_minute,
+        -- Counts how many different accounts sent a small transaction to this merchant in that minute
+        -- Significance: Card testing uses many distinct accounts; a high number here is a red flag
+        COUNT(DISTINCT account_number) AS unique_accounts_tested,
+        -- Total number of small transactions (including duplicates from same account)
+        COUNT(*) AS total_small_txns,
+        -- Earliest timestamp in this minute group (start of the suspicious window)
+        MIN(transaction_timestamp) AS window_start,
+        -- Latest timestamp in this minute group (end of the window)
+        MAX(transaction_timestamp) AS window_end
+    FROM default.transactions   -- Our transaction table (corrected name)
+    WHERE amount < 5.00         -- Typical card‑testing amount (micro‑transactions)
+    GROUP BY merchant_name, DATE_TRUNC('minute', transaction_timestamp)  -- Group by merchant + minute
+
+    -- HAVING filters groups after aggregation (unlike WHERE which filters rows before)
+    HAVING 
+        -- Keep only minutes where 3 or more distinct accounts tested the same merchant
+        COUNT(DISTINCT account_number) >= 3
+        -- Also ensure that total transactions are not much higher than unique accounts.
+        -- If total ≈ unique accounts, each account tested once (clean testing pattern).
+        -- If total >> unique accounts, a single account made many small transactions
+        -- (e.g., someone buying cheap songs) – we exclude that to avoid false positives.
+        AND COUNT(*) <= COUNT(DISTINCT account_number) * 1.5
+)
+
+-- Step 2: Retrieve the actual detailed transaction rows for those suspicious windows
+-- Without this step, we would only see the summary, not the individual transactions.
+SELECT 
+    t.transaction_id,               -- Unique ID of each transaction
+    t.account_number,               -- Which account made the transaction
+    t.transaction_timestamp,        -- Exact date and time (to see the sequence)
+    t.amount,                       -- How much (should be < $5)
+    t.merchant_name,                -- The merchant that was tested
+    t.merchant_category,            -- Type of merchant (charity, online, etc.)
+    t.location_ip,                  -- IP address used (often repeated across tests)
+    t.device_id,                    -- Device identifier (often repeated)
+    s.unique_accounts_tested,       -- From the CTE: how many distinct accounts tested this merchant in that minute
+    s.total_small_txns,             -- Total number of small transactions in that window
+    s.window_start,                 -- Start time of the suspicious minute window
+    s.window_end                    -- End time of the window
+FROM default.transactions t
+-- Join the detailed transactions with the CTE to filter only those that fall inside a suspicious window
+INNER JOIN suspicious_merchants s
+    ON t.merchant_name = s.merchant_name   -- Same merchant as the suspicious group
+    AND t.transaction_timestamp BETWEEN s.window_start AND s.window_end  -- Timestamp inside the window
+-- Further restrict to only the small transactions (redundant but safe)
+WHERE t.amount < 5.00
+-- Show results grouped together by merchant name, and within that, in chronological order
+ORDER BY s.merchant_name, t.transaction_timestamp;
