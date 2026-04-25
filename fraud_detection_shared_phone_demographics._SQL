@@ -1,0 +1,27 @@
+
+-- =============================================================================
+-- EXCLUSIONARY CRITERIA (Not implemented in the query above, but can be added):
+-- 
+-- If two or more accounts share the same phone number AND also share the same 
+-- street address, state, and zip code, they might represent a legitimate 
+-- household (e.g., family members). To exclude such cases from the fraud alert,
+-- you could add a WHERE NOT EXISTS clause that filters out accounts where the 
+-- combination of (street_address, state, zip_code) is shared by more than one 
+-- account with the same phone number.
+--
+-- Example implementation (to be added after the FROM clause or within a subquery):
+--
+--   AND NOT EXISTS (
+--       SELECT 1
+--       FROM workspace.default.customer_pii_sheet_1 c2
+--       WHERE c2.Phone = c.Phone
+--         AND c2.`Street_Address 1` = c.`Street_Address 1`
+--         AND c2.State = c.State
+--         AND c2.`Zip Code` = c.`Zip Code`
+--         AND c2.Account_Number != c.Account_Number
+--   )
+--
+-- This would remove accounts that have at least one other account sharing both
+-- the same phone number and the same full address, assuming those are likely 
+-- legitimate relationships. Adjust as needed for your risk tolerance.
+-- =============================================================================
