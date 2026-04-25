@@ -33,7 +33,7 @@ A flagged list of transactions that should be escalated or blocked before they i
 2. Modify the table/column names to match your environment.
 3. Run these queries in your SQL editor (Databricks, Snowflake, PostgreSQL, etc.).
 4. Review the results and integrate into your fraud detection pipeline or monitoring dashboard.
-5. Or feel free to use the steps in your own environment.
+5. Or feel free to use whatever snippet may help. 
 
 ## Business Impact
 
