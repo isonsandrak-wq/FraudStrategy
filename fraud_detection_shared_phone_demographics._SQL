@@ -1,3 +1,90 @@
+-- =============================================================================
+-- CODE PURPOSE:
+-- Identifies accounts that share a phone number with at least one other account,
+-- then displays both their aggregated fraud statistics AND their personal
+-- demographic details (name, address, state, zip). This gives fraud analysts
+-- a complete view of suspicious accounts and their associated fraud losses.
+-- =============================================================================
+
+-- CTE 1: Find all accounts where the phone number is used by more than one account
+-- (Shared phone numbers are a classic red flag for synthetic identity or mule accounts)
+WITH duplicate_phone_accounts AS (
+    -- Select the account number and its phone number for every account
+    SELECT Account_Number, Phone
+    FROM workspace.default.customer_pii_sheet_1
+    -- Only keep accounts whose phone number appears in a list of numbers
+    -- that are associated with multiple distinct accounts
+    WHERE Phone IN (
+        -- Subquery: find all phone numbers that are used more than once
+        SELECT Phone
+        FROM workspace.default.customer_pii_sheet_1
+        GROUP BY Phone
+        -- Only include numbers that appear with 2 or more different account numbers
+        HAVING COUNT(DISTINCT Account_Number) > 1
+    )
+    -- Significance: This is the first red‑flag filter. Shared phone numbers
+    -- often indicate synthetic identity rings, family fraud, or mule accounts.
+),
+
+-- CTE 2: Aggregate fraud loss data for the accounts found above (one row per account)
+fraud_for_duplicate_phones AS (
+    SELECT 
+        dpa.Account_Number,       -- Keep the account number from CTE 1
+        dpa.Phone,                -- Keep the shared phone number
+
+        -- Count total fraud claims linked to this account (any status)
+        COUNT(fl.Fraud_Claim_ID) AS total_claims,
+        -- Significance: Shows how many fraud events are tied to the account
+
+        -- Sum of loss amounts for closed cases only (finalised losses)
+        -- CAST is needed because Loss_Amount is stored as STRING; we convert to DECIMAL for math
+        SUM(CASE WHEN fl.Case_Status = 'Closed' 
+                 THEN CAST(fl.Loss_Amount AS DECIMAL(12,2)) 
+                 ELSE 0 END) AS total_loss_closed,
+        -- Significance: Measures the actual financial impact from settled claims
+
+        -- Count of open claims (not yet resolved)
+        SUM(CASE WHEN fl.Case_Status = 'Open' THEN 1 ELSE 0 END) AS open_claims,
+        -- Significance: Open claims represent ongoing risk; unresolved cases may grow
+
+        -- Count of pending claims (awaiting more information)
+        SUM(CASE WHEN fl.Case_Status = 'Pending' THEN 1 ELSE 0 END) AS pending_claims
+        -- Significance: Pending claims indicate cases under investigation;
+        -- a high number may suggest backlog or complex fraud schemes
+
+    FROM duplicate_phone_accounts dpa
+    -- LEFT JOIN keeps all duplicate‑phone accounts even if they have no fraud claims
+    -- This helps measure false positives (shared phone but no fraud)
+    LEFT JOIN default.fraud_losses_fraud_stats fl
+        ON dpa.Account_Number = fl.Account_Number
+
+    -- Group by account and phone to produce one row per unique account
+    GROUP BY dpa.Account_Number, dpa.Phone
+    -- Significance: Aggregation collapses multiple fraud claims into a single,
+    -- easy‑to‑read summary per account.
+)
+
+-- Final output: join demographic info from customer table to get full picture
+SELECT 
+    c.Account_Number,               -- Unique identifier from customer table
+    c.Phone,                        -- The shared phone number (from customer table)
+    c.First_Name,                   -- Customer's first name – helps identify real vs. fake identities
+    c.Last_Name,                    -- Customer's last name – can be compared across shared‑phone accounts
+    c.`Street_Address 1` AS street_address,  -- Full street address; if multiple accounts share address, another red flag
+    c.State,                        -- State – useful for geographic clustering of fraud
+    c.`Zip Code` AS zip_code,       -- Zip code – can be used to detect location anomalies
+    f.total_claims,                 -- Total fraud claims for this account (from CTE 2)
+    f.total_loss_closed,            -- Total closed‑case loss amount (financial impact)
+    f.open_claims,                  -- Number of unresolved open cases
+    f.pending_claims                -- Number of cases awaiting more information
+FROM workspace.default.customer_pii_sheet_1 c
+-- INNER JOIN ensures we only include accounts that were flagged as having duplicate phone numbers
+-- (the CTE already contains only those accounts, but re‑joining to the customer table brings demographics)
+JOIN fraud_for_duplicate_phones f
+    ON c.Account_Number = f.Account_Number
+-- Order by phone number first (groups all accounts sharing the same phone together) then account number
+ORDER BY c.Phone, c.Account_Number;
+-- Significance: The ordering makes it easy to see clusters of suspicious accounts at a glance.
 
 -- =============================================================================
 -- EXCLUSIONARY CRITERIA (Not implemented in the query above, but can be added):
