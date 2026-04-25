@@ -1,0 +1,31 @@
+-- CTE: Find all account numbers that have at least one other account with a very similar email (Levenshtein distance ≤ 3)
+WITH similar_email_accounts AS (
+    -- Get the Distinct first account number from each suspicious pair
+    SELECT DISTINCT a1.Account_Number
+    FROM workspace.default.customer_pii_sheet_1 AS a1
+    JOIN workspace.default.customer_pii_sheet_1 AS a2 
+        ON a1.Account_Number < a2.Account_Number                     -- Different accounts, no duplicate pairs
+    WHERE LEVENSHTEIN(a1.Email, a2.Email) <= 3                       -- Emails differ by at most 3 edits
+    
+    UNION   -- Combine with the second account number from each pair
+    
+    -- Get the second account number from each suspicious pair
+    SELECT DISTINCT a2.Account_Number
+    FROM workspace.default.customer_pii_sheet_1 AS a1
+    JOIN workspace.default.customer_pii_sheet_1 AS a2 
+        ON a1.Account_Number < a2.Account_Number
+    WHERE LEVENSHTEIN(a1.Email, a2.Email) <= 3
+)
+-- Main query: Join suspicious accounts with fraud loss data
+SELECT 
+    a.Account_Number,
+    a.Email,
+    a.First_Name,          -- adjust column name if different (e.g., Frist_Name)
+    a.Last_Name,
+    f.Fraud_Claim_ID,      -- Fraud claim ID if exists, else NULL
+    f.Loss_Amount          -- Loss amount (NULL if no fraud claim or case not closed)
+FROM workspace.default.customer_pii_sheet_1 AS a
+LEFT JOIN default.fraud_losses_fraud_stats AS f   -- LEFT JOIN keeps all suspicious accounts, even those without fraud claims
+    ON a.Account_Number = f.Account_Number
+WHERE a.Account_Number IN (SELECT Account_Number FROM similar_email_accounts)   -- Only suspicious accounts
+ORDER BY a.Account_Number, f.Fraud_Claim_ID;
