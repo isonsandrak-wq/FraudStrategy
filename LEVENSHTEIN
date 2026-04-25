@@ -1,31 +1,70 @@
--- CTE: Find all account numbers that have at least one other account with a very similar email (Levenshtein distance ≤ 3)
+-- =============================================================================
+-- CTE: Find all account numbers that have at least one other account 
+--      with a very similar email (Levenshtein distance ≤ 3)
+-- 
+-- Significance: Detects clusters of accounts that share nearly identical email addresses,
+-- which is a classic red flag for synthetic identity fraud or automated account creation.
+-- By flagging these accounts, investigators can focus on potential organized fraud rings.
+-- =============================================================================
 WITH similar_email_accounts AS (
-    -- Get the Distinct first account number from each suspicious pair
+    
+    -- -------------------------------------------------------------------------
+    -- Part 1: Get the DISTINCT first account number from each suspicious pair
+    -- (a1.Account_Number is the "smaller" account number due to the < condition)
+    --
+    -- Why significant: The self‑join with a1.Account_Number < a2.Account_Number
+    -- ensures each unordered pair appears only once (prevents duplicate comparisons)
+    -- and avoids matching an account with itself.
+    -- -------------------------------------------------------------------------
     SELECT DISTINCT a1.Account_Number
     FROM workspace.default.customer_pii_sheet_1 AS a1
     JOIN workspace.default.customer_pii_sheet_1 AS a2 
         ON a1.Account_Number < a2.Account_Number                     -- Different accounts, no duplicate pairs
     WHERE LEVENSHTEIN(a1.Email, a2.Email) <= 3                       -- Emails differ by at most 3 edits
     
-    UNION   -- Combine with the second account number from each pair
+    UNION   -- Combine results from both sides of the pair
     
-    -- Get the second account number from each suspicious pair
+    -- -------------------------------------------------------------------------
+    -- Part 2: Get the DISTINCT second account number from each suspicious pair
+    -- (a2.Account_Number is the "larger" one)
+    --
+    -- Why significant: The UNION ensures all account numbers that appear in *any*
+    -- suspicious pair are collected. This gives a complete list of potentially
+    -- fraudulent accounts, not just one side of the pair.
+    -- -------------------------------------------------------------------------
     SELECT DISTINCT a2.Account_Number
     FROM workspace.default.customer_pii_sheet_1 AS a1
     JOIN workspace.default.customer_pii_sheet_1 AS a2 
         ON a1.Account_Number < a2.Account_Number
     WHERE LEVENSHTEIN(a1.Email, a2.Email) <= 3
 )
+
+-- =============================================================================
 -- Main query: Join suspicious accounts with fraud loss data
+-- 
+-- Purpose: Enrich the list of email‑similar accounts with actual fraud claim
+-- information. This shows whether the accounts flagged by email similarity
+-- have resulted in financial losses, helping to validate the detection method.
+-- =============================================================================
 SELECT 
-    a.Account_Number,
-    a.Email,
-    a.First_Name,          -- adjust column name if different (e.g., Frist_Name)
-    a.Last_Name,
-    f.Fraud_Claim_ID,      -- Fraud claim ID if exists, else NULL
-    f.Loss_Amount          -- Loss amount (NULL if no fraud claim or case not closed)
+    a.Account_Number,                -- Unique identifier for the account
+    a.Email,                         -- The email address used to flag similarity
+    a.First_Name,                    -- Customer's first name (rename if column is Frist_Name)
+    a.Last_Name,                     -- Customer's last name
+    f.Fraud_Claim_ID,                -- Associated fraud claim (NULL if none exists)
+    f.Loss_Amount                    -- Net loss amount from that claim (NULL if case open/pending)
 FROM workspace.default.customer_pii_sheet_1 AS a
-LEFT JOIN default.fraud_losses_fraud_stats AS f   -- LEFT JOIN keeps all suspicious accounts, even those without fraud claims
+
+-- LEFT JOIN keeps all suspicious accounts, even those without any fraud claim.
+-- Significance: This allows us to measure false positives – accounts flagged by
+-- email similarity but with no recorded fraud. A high number of such accounts
+-- might indicate the Levenshtein threshold is too loose, or that the fraud
+-- detection strategy needs adjustment.
+LEFT JOIN default.fraud_losses_fraud_stats AS f   
     ON a.Account_Number = f.Account_Number
-WHERE a.Account_Number IN (SELECT Account_Number FROM similar_email_accounts)   -- Only suspicious accounts
+
+-- Only include accounts that were identified as part of an email‑similar pair
+WHERE a.Account_Number IN (SELECT Account_Number FROM similar_email_accounts)
+
+-- Order results by account number and then by claim ID for easy readability
 ORDER BY a.Account_Number, f.Fraud_Claim_ID;
