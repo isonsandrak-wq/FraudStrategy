@@ -43,4 +43,4 @@ A flagged list of transactions that should be escalated or blocked before they i
 
 ---
 
-*These strategies were developed during my work at HealthEquity, EBTH, and Genpact. They have been anonymized and generalized for portfolio showcase.*
+*These strategies were developed for use during my SQL Saturdays classes and work in DataBricks SQL Spark.*
