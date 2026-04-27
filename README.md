@@ -44,3 +44,4 @@ A flagged list of transactions that should be escalated or blocked before they i
 ---
 
 *These strategies were developed for use during my SQL Saturdays classes and work in DataBricks SQL Spark.*
+All data, tables, SQL examples, and fraud scenarios in this repository are entirely fictional and created solely for educational and training purposes. No real customer information, personal data, trade secrets, or intellectual property has been used or derived from any actual organization. Any resemblance to real persons, businesses, events, or financial data is purely coincidental. This content is intended to teach SQL and fraud detection concepts and should not be used for real‑world financial decisions without proper validation.
