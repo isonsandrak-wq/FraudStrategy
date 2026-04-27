@@ -1,0 +1,44 @@
+-- =============================================================================
+-- GOAL: Calculate false positive rate for the "duplicate phone number" fraud strategy.
+-- DEFINITIONS:
+--   Alerted account = account whose phone number is used by ≥2 accounts.
+--   True positive   = alerted account with ≥1 closed, approved fraud claim.
+--   False positive  = alerted account with 0 closed, approved claims.
+--   False positive rate = false positives / total alerted accounts.
+-- =============================================================================
+
+-- Step 1: Identify all accounts that share a phone number with at least one other account
+WITH duplicate_phone_accounts AS (
+    SELECT Account_Number, Phone
+    FROM workspace.default.customer_pii_sheet_1
+    WHERE Phone IN (
+        SELECT Phone
+        FROM workspace.default.customer_pii_sheet_1
+        GROUP BY Phone
+        HAVING COUNT(DISTINCT Account_Number) > 1
+    )
+),
+
+-- Step 2: For each alerted account, determine if it has a "true fraud" claim
+-- True fraud = closed claim with Outcome = 'approval' (bank paid, real fraud)
+account_fraud_status AS (
+    SELECT 
+        dpa.Account_Number,
+        -- If at least one approved, closed claim exists → TRUE, else FALSE
+        MAX(CASE 
+            WHEN fl.Case_Status = 'Closed' AND fl.Outcome = 'approval' 
+            THEN 1 ELSE 0 
+        END) AS has_true_fraud
+    FROM duplicate_phone_accounts dpa
+    LEFT JOIN default.fraud_losses_fraud_stats fl
+        ON dpa.Account_Number = fl.Account_Number
+    GROUP BY dpa.Account_Number
+)
+
+-- Step 3: Calculate totals and false positive rate
+SELECT 
+    COUNT(*) AS total_alerted_accounts,
+    SUM(has_true_fraud) AS true_positives,
+    COUNT(*) - SUM(has_true_fraud) AS false_positives,
+    ROUND(100.0 * (COUNT(*) - SUM(has_true_fraud)) / COUNT(*), 2) AS false_positive_rate_percent
+FROM account_fraud_status;
